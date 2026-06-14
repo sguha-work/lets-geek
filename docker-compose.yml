@@ -1,0 +1,50 @@
+services:
+  db:
+    image: mongo:6.0
+    container_name: lets-geek-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - lets-geek-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lets-geek-backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      - MONGODB_URI=mongodb://db:27017/lets_geek
+      - PORT=3000
+    depends_on:
+      - db
+    networks:
+      - lets-geek-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lets-geek-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - lets-geek-network
+
+networks:
+  lets-geek-network:
+    driver: bridge
+
+volumes:
+  mongo-data:
