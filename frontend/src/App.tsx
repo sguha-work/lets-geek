@@ -27,8 +27,10 @@ import {
   Clock,
   Zap,
   BookMarked,
-  Star,
   LayoutGrid,
+  Upload,
+  FileUp,
+  CheckCircle2,
 } from 'lucide-react';
 
 // ==========================================
@@ -41,6 +43,10 @@ export interface Source {
   url: string;
   content: string;
   createdAt?: string;
+  // File upload fields
+  filePath?: string;
+  fileName?: string;
+  fileSize?: number;
 }
 
 export interface ChecklistItem {
@@ -211,6 +217,12 @@ function StudySpaceWorkspace({
   const [newSourceType, setNewSourceType] = useState<'pdf' | 'doc' | 'audio' | 'video' | 'url'>('pdf');
   const [newSourceUrl, setNewSourceUrl] = useState<string>('');
   const [newSourceContent, setNewSourceContent] = useState<string>('');
+  // File upload state
+  const [newSourceFile, setNewSourceFile] = useState<File | null>(null);
+  const [sourceInputMode, setSourceInputMode] = useState<'url' | 'file'>('url');
+  const [fileDragOver, setFileDragOver] = useState<boolean>(false);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form states - Add/Edit Note
   const [noteFormTitle, setNoteFormTitle] = useState<string>('');
@@ -325,43 +337,74 @@ function StudySpaceWorkspace({
   // ==========================================
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSourceTitle.trim()) return;
+    const titleValue = newSourceTitle.trim() || (newSourceFile?.name ?? '');
+    if (!titleValue && !newSourceFile) return;
 
-    const payload = {
-      title: newSourceTitle,
-      type: newSourceType,
-      url: newSourceUrl || `https://example.com/mock-${Date.now()}`,
-      content: newSourceContent,
-    };
+    setIsUploading(true);
 
     if (backendOnline) {
       try {
-        const res = await fetch(`${API_BASE}/sources`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (res.ok) {
-          const created = await res.json();
-          setSources([created, ...sources]);
+        if (sourceInputMode === 'file' && newSourceFile) {
+          // --- Multipart upload ---
+          const fd = new FormData();
+          fd.append('file', newSourceFile);
+          fd.append('type', newSourceType);
+          fd.append('title', titleValue || newSourceFile.name);
+          if (newSourceUrl.trim()) fd.append('url', newSourceUrl.trim());
+          if (newSourceContent.trim()) fd.append('content', newSourceContent.trim());
+
+          const res = await fetch(`${API_BASE}/sources/upload`, {
+            method: 'POST',
+            body: fd,
+          });
+          if (res.ok) {
+            const created = await res.json();
+            setSources([created, ...sources]);
+          }
+        } else {
+          // --- JSON (URL-only) ---
+          const res = await fetch(`${API_BASE}/sources`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: titleValue || 'Untitled Source',
+              type: newSourceType,
+              url: newSourceUrl || `https://example.com/mock-${Date.now()}`,
+              content: newSourceContent,
+            }),
+          });
+          if (res.ok) {
+            const created = await res.json();
+            setSources([created, ...sources]);
+          }
         }
       } catch (err) {
         console.error('Failed to save source:', err);
       }
     } else {
+      // Offline fallback
       const mockCreated: Source = {
         _id: `mock-s-${Date.now()}`,
-        ...payload,
-        content: payload.content || `# ${payload.title}\n\nThis is static mock content for local study. Add more concepts or explanations here.`,
+        title: titleValue || newSourceFile?.name || 'Untitled Source',
+        type: newSourceType,
+        url: newSourceUrl || (newSourceFile ? URL.createObjectURL(newSourceFile) : `https://example.com/mock-${Date.now()}`),
+        content: newSourceContent || `# ${titleValue}\n\nThis is static mock content for local study. Add more concepts or explanations here.`,
+        ...(newSourceFile && {
+          fileName: newSourceFile.name,
+          fileSize: newSourceFile.size,
+        }),
       };
-      const updated = [mockCreated, ...sources];
-      syncLocalData(updated, undefined);
+      syncLocalData([mockCreated, ...sources], undefined);
     }
 
+    // Reset
     setNewSourceTitle('');
     setNewSourceType('pdf');
     setNewSourceUrl('');
     setNewSourceContent('');
+    setNewSourceFile(null);
+    setSourceInputMode('url');
+    setIsUploading(false);
     setShowAddSourceModal(false);
   };
 
@@ -1206,18 +1249,30 @@ function StudySpaceWorkspace({
           ========================================== */}
       {showAddSourceModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#0f121d] border border-zinc-800/80 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+          <div className="bg-[#0f121d] border border-zinc-800/80 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
             <div className="p-4 border-b border-zinc-900/60 flex items-center justify-between bg-[#0b0e16]">
-              <h3 className="text-sm font-semibold text-white">Add Study Source</h3>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-violet-500/10 border border-violet-500/20 rounded-lg">
+                  <FileUp className="w-3.5 h-3.5 text-violet-400" />
+                </div>
+                <h3 className="text-sm font-semibold text-white">Add Study Source</h3>
+              </div>
               <button
-                onClick={() => setShowAddSourceModal(false)}
+                onClick={() => {
+                  setShowAddSourceModal(false);
+                  setNewSourceFile(null);
+                  setSourceInputMode('url');
+                }}
                 className="p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-md transition"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleAddSource} className="p-5 space-y-4">
+            <form onSubmit={handleAddSource} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
+
+              {/* Source Type Selector */}
               <div>
                 <label className="block text-xxs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Source Type</label>
                 <div className="grid grid-cols-5 gap-1.5">
@@ -1225,7 +1280,7 @@ function StudySpaceWorkspace({
                     <button
                       key={type}
                       type="button"
-                      onClick={() => setNewSourceType(type)}
+                      onClick={() => { setNewSourceType(type); setNewSourceFile(null); }}
                       className={`py-2 rounded-xl text-[10px] font-semibold uppercase border transition flex flex-col items-center justify-center gap-1 ${
                         newSourceType === type
                           ? 'bg-violet-600/10 border-violet-500 text-violet-300 shadow-[0_0_12px_rgba(139,92,246,0.1)]'
@@ -1239,55 +1294,199 @@ function StudySpaceWorkspace({
                 </div>
               </div>
 
+              {/* Input mode toggle: URL vs File Upload */}
+              <div className="flex rounded-xl border border-zinc-800 overflow-hidden p-0.5 bg-[#0b0e16] gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSourceInputMode('url')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                    sourceInputMode === 'url'
+                      ? 'bg-zinc-800 text-white'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <Link2 className="w-3.5 h-3.5" /> URL / Link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSourceInputMode('file')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                    sourceInputMode === 'file'
+                      ? 'bg-violet-600/20 text-violet-300 border border-violet-500/30'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  <Upload className="w-3.5 h-3.5" /> Upload File
+                </button>
+              </div>
+
+              {/* Title / Label */}
               <div>
                 <label className="block text-xxs font-medium text-zinc-400 mb-1 uppercase tracking-wider">Title / Label</label>
                 <input
                   type="text"
-                  required
-                  placeholder="e.g. Physics Textbook Chapter 1"
+                  placeholder={newSourceFile ? newSourceFile.name : 'e.g. Physics Textbook Chapter 1'}
                   value={newSourceTitle}
                   onChange={(e) => setNewSourceTitle(e.target.value)}
                   className="w-full bg-[#121624] border border-zinc-900 focus:border-violet-500/50 outline-none text-xs rounded-xl px-3.5 py-2 text-zinc-100 placeholder-zinc-600 transition"
                 />
               </div>
 
-              <div>
-                <label className="block text-xxs font-medium text-zinc-400 mb-1 uppercase tracking-wider">Reference URL (Optional)</label>
-                <input
-                  type="url"
-                  placeholder="https://example.com/materials/quantum.pdf"
-                  value={newSourceUrl}
-                  onChange={(e) => setNewSourceUrl(e.target.value)}
-                  className="w-full bg-[#121624] border border-zinc-900 focus:border-violet-500/50 outline-none text-xs rounded-xl px-3.5 py-2 text-zinc-100 placeholder-zinc-600 transition"
-                />
-              </div>
+              {/* ---- URL MODE ---- */}
+              {sourceInputMode === 'url' && (
+                <div>
+                  <label className="block text-xxs font-medium text-zinc-400 mb-1 uppercase tracking-wider">Reference URL</label>
+                  <input
+                    type="url"
+                    placeholder="https://example.com/materials/quantum.pdf"
+                    value={newSourceUrl}
+                    onChange={(e) => setNewSourceUrl(e.target.value)}
+                    className="w-full bg-[#121624] border border-zinc-900 focus:border-violet-500/50 outline-none text-xs rounded-xl px-3.5 py-2 text-zinc-100 placeholder-zinc-600 transition"
+                  />
+                </div>
+              )}
 
+              {/* ---- FILE UPLOAD MODE ---- */}
+              {sourceInputMode === 'file' && (
+                <div>
+                  <label className="block text-xxs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">
+                    Upload File
+                    <span className="ml-2 text-zinc-600 normal-case font-normal">
+                      {newSourceType === 'pdf' && '(.pdf)'}
+                      {newSourceType === 'doc' && '(.docx, .doc, .txt, .md)'}
+                      {newSourceType === 'audio' && '(.mp3, .wav, .ogg, .m4a)'}
+                      {newSourceType === 'video' && '(.mp4, .webm, .mov)'}
+                      {newSourceType === 'url' && '(.pdf, .csv, .xlsx, .html)'}
+                    </span>
+                  </label>
+
+                  {/* Hidden native file input */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    accept={
+                      newSourceType === 'pdf' ? '.pdf,application/pdf' :
+                      newSourceType === 'doc' ? '.doc,.docx,.txt,.md,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+                      newSourceType === 'audio' ? 'audio/*' :
+                      newSourceType === 'video' ? 'video/*' :
+                      '.pdf,.csv,.xlsx,.xls,.html,.json,text/html,text/csv,application/json,application/pdf'
+                    }
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setNewSourceFile(f);
+                        if (!newSourceTitle.trim()) setNewSourceTitle(f.name.replace(/\.[^.]+$/, ''));
+                      }
+                    }}
+                  />
+
+                  {/* Drag & drop zone */}
+                  {!newSourceFile ? (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={(e) => { e.preventDefault(); setFileDragOver(true); }}
+                      onDragLeave={() => setFileDragOver(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setFileDragOver(false);
+                        const f = e.dataTransfer.files[0];
+                        if (f) {
+                          setNewSourceFile(f);
+                          if (!newSourceTitle.trim()) setNewSourceTitle(f.name.replace(/\.[^.]+$/, ''));
+                        }
+                      }}
+                      className={`w-full border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 ${
+                        fileDragOver
+                          ? 'border-violet-500 bg-violet-500/10'
+                          : 'border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900/30'
+                      }`}
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <div className={`p-3 rounded-xl transition ${
+                          fileDragOver ? 'bg-violet-500/20' : 'bg-zinc-900'
+                        }`}>
+                          <Upload className={`w-5 h-5 ${fileDragOver ? 'text-violet-400' : 'text-zinc-500'}`} />
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-zinc-300">
+                            {fileDragOver ? 'Drop your file here' : 'Drag & drop or click to browse'}
+                          </p>
+                          <p className="text-[10px] text-zinc-600 mt-0.5">Up to 100 MB</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* File selected — preview chip */
+                    <div className="flex items-center gap-3 p-3 bg-violet-950/20 border border-violet-500/25 rounded-xl">
+                      <div className="p-2 bg-violet-500/15 rounded-lg flex-shrink-0">
+                        {getSourceIcon(newSourceType)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-zinc-100 truncate">{newSourceFile.name}</p>
+                        <p className="text-[10px] text-zinc-500">
+                          {newSourceFile.size < 1024 * 1024
+                            ? `${(newSourceFile.size / 1024).toFixed(1)} KB`
+                            : `${(newSourceFile.size / (1024 * 1024)).toFixed(2)} MB`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                        <button
+                          type="button"
+                          onClick={() => { setNewSourceFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition"
+                          title="Remove file"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Optional text content */}
               <div>
                 <label className="block text-xxs font-medium text-zinc-400 mb-1 uppercase tracking-wider">
-                  Text Contents (Optional - For Split-Pane Preview)
+                  Text Contents <span className="text-zinc-600 normal-case font-normal">(Optional — for AI preview)</span>
                 </label>
                 <textarea
-                  placeholder="Write or paste the source text here..."
-                  rows={4}
+                  placeholder="Write or paste the source text here for AI grounding..."
+                  rows={3}
                   value={newSourceContent}
                   onChange={(e) => setNewSourceContent(e.target.value)}
                   className="w-full bg-[#121624] border border-zinc-900 focus:border-violet-500/50 outline-none text-xs rounded-xl px-3.5 py-2 text-zinc-100 placeholder-zinc-600 transition resize-none custom-scrollbar"
                 />
               </div>
 
+              {/* Actions */}
               <div className="flex justify-end gap-2 pt-2 border-t border-zinc-900/60">
                 <button
                   type="button"
-                  onClick={() => setShowAddSourceModal(false)}
+                  onClick={() => {
+                    setShowAddSourceModal(false);
+                    setNewSourceFile(null);
+                    setSourceInputMode('url');
+                  }}
                   className="px-4 py-2 border border-zinc-800 bg-transparent text-zinc-400 hover:text-zinc-200 text-xs rounded-xl transition font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs rounded-xl transition font-semibold"
+                  disabled={isUploading || (sourceInputMode === 'file' && !newSourceFile && !newSourceTitle.trim())}
+                  className={`px-4 py-2 text-white text-xs rounded-xl transition font-semibold flex items-center gap-2 ${
+                    isUploading
+                      ? 'bg-violet-700 cursor-not-allowed'
+                      : 'bg-violet-600 hover:bg-violet-700'
+                  }`}
                 >
-                  Save Source
+                  {isUploading ? (
+                    <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Uploading...</>
+                  ) : (
+                    <><FileUp className="w-3.5 h-3.5" /> Save Source</>
+                  )}
                 </button>
               </div>
             </form>

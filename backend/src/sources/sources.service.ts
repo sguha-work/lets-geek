@@ -13,7 +13,15 @@ export class SourcesService {
     return this.sourceModel.find().sort({ createdAt: -1 }).exec();
   }
 
-  async create(createDto: { title: string; type: string; url: string; content?: string }): Promise<Source> {
+  async create(createDto: {
+    title: string;
+    type: string;
+    url: string;
+    content?: string;
+    filePath?: string;
+    fileName?: string;
+    fileSize?: number;
+  }): Promise<Source> {
     let content = createDto.content || '';
     
     // Auto-generate realistic study content if not provided

@@ -19,6 +19,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
+      - uploads-data:/app/uploads
     environment:
       - MONGODB_URI=mongodb://db:27017/lets_geek
       - PORT=3000
@@ -48,3 +49,5 @@ networks:
 
 volumes:
   mongo-data:
+  uploads-data:
+

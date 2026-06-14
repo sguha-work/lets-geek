@@ -14,6 +14,16 @@ export class Source extends Document {
 
   @Prop()
   content: string; // text contents for preview
+
+  // File upload fields (populated when a file is uploaded)
+  @Prop()
+  filePath: string; // server-relative path e.g. /uploads/abc123.pdf
+
+  @Prop()
+  fileName: string; // original filename from the client
+
+  @Prop()
+  fileSize: number; // bytes
 }
 
 export const SourceSchema = SchemaFactory.createForClass(Source);
